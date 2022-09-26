@@ -50,12 +50,12 @@ func main() {
 	c := cron.New()
 	if _, err = c.AddFunc("*/5 * * * *", func() {
 		clientDocker()
-		bridgeID = getBridge()
-
-		if bridgeID == "" {
-			log.Errorln("bridgeID is empty")
-			return
-		}
+		//bridgeID = getBridge()
+		//
+		//if bridgeID == "" {
+		//	log.Errorln("bridgeID is empty")
+		//	return
+		//}
 		// hostNow
 		//err := Cli.NetworkConnect(context.Background(), "", "", c)
 		list, err := Cli.ContainerList(context.Background(), types.ContainerListOptions{})
@@ -78,10 +78,10 @@ func main() {
 			//if dataType, _ := json.Marshal(list[i].NetworkSettings.Networks); !strings.Contains(string(dataType), bridgeID) {
 			//	updateNetwork(list[i].ID)
 			//}
-			if h1 := list[i].HostConfig.NetworkMode; h1 != "host" && !strings.Contains(h1, "default") { // TODO 修复容器网络模式
-				updateNetwork(list[i].ID)
-			}
-			updateHostName(list[i])
+			//if h1 := list[i].HostConfig.NetworkMode; h1 != "host" && !strings.Contains(h1, "default") { // TODO 修复容器网络模式
+			//	updateNetwork(list[i].ID)
+			//}
+			//updateHostName(list[i])
 		}
 		// hostBytes
 		hostBytes, err = ioutil.ReadFile(*defaultHostsFile)

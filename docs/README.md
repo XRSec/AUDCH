@@ -45,7 +45,8 @@ docker run -itd --name audch \
   xrsec/audch
 ```
 
-## Faq
+## FAQ
 
-- `docker commit -m "AUDCH Update hostname" CONTAINER CONTAINER/Image`
+- ~~`docker commit -m "AUDCH Update hostname" CONTAINER CONTAINER/Image`~~
 - ~~edit CONTAINER json file~~
+- dnsmasq

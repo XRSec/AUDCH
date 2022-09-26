@@ -3,7 +3,7 @@ ARG buildTime
 ARG versionData
 ARG commitId
 ARG author
-COPY . /audch
+COPY .. /audch
 WORKDIR /audch
 RUN CGO_ENABLED=0 go build -a -ldflags "-extldflags -static -X main.buildTime=${buildTime} -X main.versionData=${versionData} -X main.commitId=${commitId} -X main.author=${XRSec}" -o audch .
 
