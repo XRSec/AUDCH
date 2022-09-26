@@ -171,3 +171,4 @@ jobs:
           username: ${{ SECRETS.DOCKERHUB_USERNAME }}
           password: ${{ SECRETS.DOCKERHUB_PASSWORD }}
           repository: ${{ SECRETS.DOCKERHUB_USERNAME }}/audch
+          readme-filepath: docs/README.md
