@@ -11,7 +11,7 @@ on:
     branches: [ main ]
     paths: # 这里是用来指定哪个文件更改，才会触发的
       - 'main.go'
-      - 'Dockerfiles'
+      - 'Dockerfiles/**'
 
 jobs:
   DockerBuild:
