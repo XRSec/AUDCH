@@ -124,6 +124,20 @@ jobs:
             commitId=${{ steps.commitId.outputs.dir }} 
             author=XRSec
       -
+        name: Build and push Docker images
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          file: Dockerfiles/dnsmasq
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/dnsmasq:latest
+            ghcr.io/${{ secrets.DOCKERHUB_USERNAME }}/dnsmasq:latest
+            ${{ secrets.DOCKERHUB_REGISTRY_ALIYUN }}/${{ secrets.DOCKERHUB_USERNAME }}/dnsmasq:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/dnsmasq:latest.cache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/dnsmasq:latest.cache,mode=max
+      -
         name: Get Data
         id: getDingData
         run: |
