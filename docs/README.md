@@ -47,5 +47,5 @@ docker run -itd --name audch \
 
 ## Faq
 
-- `docker commit -m "AUDCH Update hostname" CONTAINER CONTAINER.image`
-- edit CONTAINER json file
+- `docker commit -m "AUDCH Update hostname" CONTAINER CONTAINER/Image`
+- ~~edit CONTAINER json file~~
