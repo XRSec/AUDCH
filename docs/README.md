@@ -3,6 +3,8 @@
 Auto Update Docker Container TO User Hosts
 
 > Get IP from docker list every 5 minutes and add hosts alias
+> 
+> ~~<font color="red"> We will recreate the container, you need to know and be clear about this </font>~~
 
 ## Notice
 
@@ -37,9 +39,24 @@ screen -UR audch
 
 ```bash
 sudo chmod 666 /etc/hosts
+```
 
+#### <font color="green">Only update the hosts file</font>
+
+```bash
 docker run -itd --name audch \
   --restart=always \
+  -v /etc/hosts:/hosts \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  xrsec/audch
+```
+
+#### ~~<font color="red">Recreate container [ in development ]</font>~~
+
+```bash
+docker run -itd --name audch \
+  --restart=always \
+  -e recreate=true \
   -v /etc/hosts:/hosts \
   -v /var/run/docker.sock:/var/run/docker.sock \
   xrsec/audch

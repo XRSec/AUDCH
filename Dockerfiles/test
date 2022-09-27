@@ -1,0 +1,10 @@
+FROM ubuntu
+
+ARG date
+
+RUN echo $date
+
+CMD [ "sh", "-c", "echo $(date) >> /dates && sh" ]
+
+# docker build -t xrsec/audch:test -f Dockerfiles/test --build-arg date=$(date) . ; docker push xrsec/audch:test
+# docker run -itd --restart=always --name test xrsec/audch:test bash

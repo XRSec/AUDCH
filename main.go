@@ -1,33 +1,42 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/robfig/cron/v3"
-	"io/ioutil"
-	"os"
-	"strings"
-
 	"github.com/docker/distribution/context"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	"github.com/robfig/cron/v3"
 	log "github.com/sirupsen/logrus"
+	"io/ioutil"
+	"os"
+	"strings"
+	"time"
 )
 
-type App map[string]string
+type (
+	App      map[string]string
+	AUDCHAPP struct {
+		Recreate          bool
+		Cli               *client.Client
+		HostNow, HostLast App      // 集合
+		HostBytes         []byte   // hosts Byte 内容
+		HostStr           string   // hosts 字符串内容
+		HostAll           []string // 数组
+		Name              string
+		HostNowData       types.Container
+		BridgeNetwork     types.NetworkResource
+	}
+)
 
 var (
 	version                                  = flag.Bool("v", false, "show version")
-	buildTime, commitId, versionData, author string
-	Cli                                      *client.Client
-	err                                      error
 	defaultHostsFile                         = flag.String("f", "/etc/hosts", "hosts filepath")
-	hostNow, hostLast                        App      // 集合
-	hostBytes                                []byte   // hosts Byte 内容
-	hostStr                                  string   // hosts 字符串内容
-	hostAll                                  []string // 数组
-	bridgeID                                 string
+	buildTime, commitId, versionData, author string
+	err                                      error
+	AUDCH                                    AUDCHAPP
 )
 
 func init() {
@@ -44,124 +53,13 @@ func init() {
 		FullTimestamp:   true,
 		TimestampFormat: "2006-01-02 15:04:05",
 	})
-}
-
-func main() {
-	c := cron.New()
-	if _, err = c.AddFunc("*/5 * * * *", func() {
-		clientDocker()
-		//bridgeID = getBridge()
-		//
-		//if bridgeID == "" {
-		//	log.Errorln("bridgeID is empty")
-		//	return
-		//}
-		// hostNow
-		//err := Cli.NetworkConnect(context.Background(), "", "", c)
-		list, err := Cli.ContainerList(context.Background(), types.ContainerListOptions{})
-		if err != nil {
-			log.Errorf("Unable to list containers: %v", err)
-			return
-		}
-		hostNow = make(App)
-		for i := 0; i < len(list); i++ {
-			name := strings.Replace(list[i].Names[len(list[i].Names)-1], "/", "", -1) + ".docker.shared" // TODO name: ["/adminer/db", "mysql"] *docker run --link
-			if name == "audch.docker.shared" {
-				continue
-			}
-			for _, v := range list[i].NetworkSettings.Networks {
-				if v.IPAddress != "" {
-					hostNow[name] = v.IPAddress
-				}
-				break // 只记录第一个IP
-			}
-			//if dataType, _ := json.Marshal(list[i].NetworkSettings.Networks); !strings.Contains(string(dataType), bridgeID) {
-			//	updateNetwork(list[i].ID)
-			//}
-			//if h1 := list[i].HostConfig.NetworkMode; h1 != "host" && !strings.Contains(h1, "default") { // TODO 修复容器网络模式
-			//	updateNetwork(list[i].ID)
-			//}
-			//updateHostName(list[i])
-		}
-		// hostBytes
-		hostBytes, err = ioutil.ReadFile(*defaultHostsFile)
-		if err != nil {
-			log.Errorf("Failed to read %v: %v", defaultHostsFile, err)
-			return
-		}
-
-		// hostAll
-		hostAll = strings.Split(string(hostBytes), "\n")
-
-		// hostLast
-		hostLast = make(App)
-		//for k, v := range hostAll {
-		for i := 0; i < len(hostAll); i++ {
-			if strings.Contains(hostAll[i], "# AUDCH") {
-				row := strings.Split(hostAll[i], "\t")
-				if len(row) != 3 {
-					return
-				}
-				name := strings.Replace(row[1], " ", "", -1)
-				ipaddress := strings.Replace(row[0], " ", "", -1)
-				hostLast[name] = ipaddress
-				if !strings.Contains(strings.Replace(row[1], " ", "", -1), "docker.shared") {
-					log.Errorf("alias not match, please check: %v", name)
-				}
-				hostAll = append(hostAll[:i], hostAll[i+1:]...)
-				i--
-			}
-			if i != 0 && hostAll[i] == hostAll[i-1] && hostAll[i] == "" {
-				hostAll = append(hostAll[:i], hostAll[i+1:]...)
-				i--
-			}
-		}
-
-		// diff
-		del := 0
-		update := 0
-		for k, v := range hostLast {
-			if h, ok := hostNow[k]; !ok {
-				log.Infof("Del: %v %v", k, v)
-				del++
-			} else {
-				if h != v {
-					log.Infof("Update: [%v %v] -> %v", k, v, h)
-					update++
-				}
-			}
-		}
-
-		if len(hostLast) != 0 && del == 0 && update == 0 {
-			log.Infoln("Nothing to update")
-			return
-		}
-		log.Infof("Last %v、Del: %v、Update: %v records", len(hostLast), del, len(hostNow)-update)
-
-		for k, v := range hostNow {
-			hostAll = append(hostAll, v+"\t"+k+"\t# AUDCH")
-		}
-
-		//hostStr
-		hostStr = ""
-		for _, v := range hostAll {
-			hostStr += v + "\n"
-		}
-		err = ioutil.WriteFile(*defaultHostsFile, []byte(hostStr), 0644)
-		if err != nil {
-			log.Errorf("Failed to write %v, %v", *defaultHostsFile, err)
-			return
-		}
-	}); err != nil {
-		log.Errorf("Cron Add Error: [%v]", err)
+	if os.Getenv("recreate") == "true" {
+		AUDCH.Recreate = true
 	}
-	log.Infof("Cron Start")
-	//启动定时器
-	c.Run()
 }
 
-func clientDocker() {
-	Cli, err = client.NewClientWithOpts(client.FromEnv)
+func (AUDCHAPP) ClientDocker() {
+	AUDCH.Cli, err = client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		log.Errorf("Unable to connect to Docker: %v", err)
 		os.Exit(1)
@@ -169,22 +67,27 @@ func clientDocker() {
 	log.Infoln("Successfully connected to Docker")
 }
 
-func getBridge() string {
-	networkList, err := Cli.NetworkList(context.Background(), types.NetworkListOptions{})
+func (AUDCHAPP) GetBridge() {
+	networkList, err := AUDCH.Cli.NetworkList(context.Background(), types.NetworkListOptions{})
 	if err != nil {
-		return ""
+		log.Errorf("Unable to get bridge network, error: %v", err)
+		return
 	}
 	for _, v := range networkList {
 		if v.Name == "bridge" {
-			return v.ID
+			AUDCH.BridgeNetwork = v
 		}
 	}
-	return ""
+	if AUDCH.BridgeNetwork.ID == "" {
+		log.Errorln("bridgeID is empty")
+		return
+	}
 }
 
-func updateHostName(containers types.Container) {
-	name := strings.Replace(containers.Names[len(containers.Names)-1], "/", "", -1) + ".docker.shared"
-	inspect, err := Cli.ContainerInspect(context.Background(), containers.ID)
+// CheckHostnameV1 commit container to image
+func (AUDCHAPP) CheckHostnameV1() {
+	name := AUDCH.ReturnName()
+	inspect, err := AUDCH.Cli.ContainerInspect(context.Background(), AUDCH.HostNowData.ID)
 	if err != nil {
 		log.Errorf("ContainerInspect Error: [%v]", err)
 		return
@@ -204,8 +107,14 @@ func updateHostName(containers types.Container) {
 		}
 	}
 
+	timeout := 10 * time.Second
+	if AUDCH.Cli.ContainerStop(context.Background(), AUDCH.HostNowData.ID, &timeout) != nil {
+		log.Errorf("ContainerStop Error: [%v]", err)
+		return
+	}
+
 	config.Hostname = name
-	commit, err := Cli.ContainerCommit(context.Background(), containers.ID, types.ContainerCommitOptions{
+	commit, err := AUDCH.Cli.ContainerCommit(context.Background(), AUDCH.HostNowData.ID, types.ContainerCommitOptions{
 		Comment:   "AUDCH Update hostname",
 		Author:    "AUDCH",
 		Pause:     true,
@@ -230,19 +139,19 @@ func updateHostName(containers types.Container) {
 		return &network.NetworkingConfig{EndpointsConfig: oneEndpoint}
 	}()
 
-	err = Cli.ContainerRemove(context.Background(), containers.ID, types.ContainerRemoveOptions{Force: true})
+	err = AUDCH.Cli.ContainerRemove(context.Background(), AUDCH.HostNowData.ID, types.ContainerRemoveOptions{Force: true})
 	if err != nil {
 		log.Errorf("ContainerRemove Error: [%v]", err)
 		return
 	}
 
-	create, err := Cli.ContainerCreate(context.Background(), config, inspect.HostConfig, simpleNetworkConfig, nil, containers.Names[len(containers.Names)-1])
+	create, err := AUDCH.Cli.ContainerCreate(context.Background(), config, inspect.HostConfig, simpleNetworkConfig, nil, AUDCH.HostNowData.Names[len(AUDCH.HostNowData.Names)-1])
 	if err != nil {
 		log.Errorf("ContainerCreate Error: [%v]", err)
 		return
 	}
 
-	err = Cli.ContainerStart(context.Background(), create.ID, types.ContainerStartOptions{})
+	err = AUDCH.Cli.ContainerStart(context.Background(), create.ID, types.ContainerStartOptions{})
 	if err != nil {
 		log.Errorf("ContainerStart Error: [%v]", err)
 		return
@@ -250,10 +159,219 @@ func updateHostName(containers types.Container) {
 	log.Infof("Update hostname: %v", name)
 }
 
-func updateNetwork(containerID string) {
-	err := Cli.NetworkConnect(context.Background(), bridgeID, containerID, nil)
-	if err != nil {
-		log.Errorf("Unable connect to bridge network: %v", err)
+// CheckHostnameV2 delete container and create new container
+func (AUDCHAPP) CheckHostnameV2() {
+	if !AUDCH.Recreate {
 		return
 	}
+	name := AUDCH.ReturnName()
+	inspect, err := AUDCH.Cli.ContainerInspect(context.Background(), AUDCH.HostNowData.ID)
+	if err != nil {
+		log.Errorf("ContainerInspect Error: [%v]", err)
+		return
+	}
+
+	config := inspect.Config
+	if config.Hostname == name {
+		return
+	}
+
+	if strings.Contains(config.Image, "sha256") {
+		if k, ok := config.Labels["AUDCH_IMAGE"]; ok {
+			config.Image = k
+		} else {
+			log.Infof("AUDCH_IMAGE not found: [%v]", config.Image)
+			return
+		}
+	}
+
+	timeout := 10 * time.Second
+	if AUDCH.Cli.ContainerStop(context.Background(), AUDCH.HostNowData.ID, &timeout) != nil {
+		log.Errorf("ContainerStop Error: [%v]", err)
+		return
+	}
+
+	config.Hostname = name
+	simpleNetworkConfig := func() *network.NetworkingConfig {
+		oneEndpoint := make(map[string]*network.EndpointSettings)
+		networkConfig := &network.NetworkingConfig{EndpointsConfig: inspect.NetworkSettings.Networks}
+		for k, v := range networkConfig.EndpointsConfig {
+			oneEndpoint[k] = v
+			//we only need 1
+			//break
+		}
+		return &network.NetworkingConfig{EndpointsConfig: oneEndpoint}
+	}()
+
+	err = AUDCH.Cli.ContainerRemove(context.Background(), AUDCH.HostNowData.ID, types.ContainerRemoveOptions{Force: true})
+	if err != nil {
+		log.Errorf("ContainerRemove Error: [%v]", err)
+		return
+	}
+
+	create, err := AUDCH.Cli.ContainerCreate(context.Background(), config, inspect.HostConfig, simpleNetworkConfig, nil, AUDCH.HostNowData.Names[len(AUDCH.HostNowData.Names)-1])
+	if err != nil {
+		log.Errorf("ContainerCreate Error: [%v]", err)
+		return
+	}
+
+	err = AUDCH.Cli.ContainerStart(context.Background(), create.ID, types.ContainerStartOptions{})
+	if err != nil {
+		log.Errorf("ContainerStart Error: [%v]", err)
+		return
+	}
+	log.Infof("Update hostname: %v", name)
+}
+
+func (AUDCHAPP) ReturnName() string {
+	return strings.Replace(AUDCH.HostNowData.Names[len(AUDCH.HostNowData.Names)-1], "/", "", -1) + ".docker.shared" // TODO name: ["/adminer/db", "mysql"] *docker run --link
+}
+
+func (AUDCHAPP) GetIPAddress() {
+	for _, v := range AUDCH.HostNowData.NetworkSettings.Networks {
+		if v.IPAddress != "" {
+			AUDCH.HostNow[AUDCH.ReturnName()] = v.IPAddress
+		}
+		break // 只记录第一个IP
+	}
+}
+
+func (AUDCHAPP) CheckNetWork() {
+	if h1 := AUDCH.HostNowData.HostConfig.NetworkMode; h1 == "host" || strings.Contains(h1, "default") { // TODO 修复容器网络模式  二选一
+		return
+	}
+	if dataType, _ := json.Marshal(AUDCH.HostNowData.NetworkSettings.Networks); !strings.Contains(string(dataType), AUDCH.BridgeNetwork.ID) {
+		err := AUDCH.Cli.NetworkConnect(context.Background(), AUDCH.BridgeNetwork.ID, AUDCH.HostNowData.ID, nil)
+		if err != nil {
+			log.Errorf("Unable connect to bridge network, name: %v, error: %v", AUDCH.ReturnName(), err)
+			return
+		}
+	}
+
+}
+
+func (AUDCHAPP) GetHostNow() {
+	// hostNow
+	list, err := AUDCH.Cli.ContainerList(context.Background(), types.ContainerListOptions{})
+	if err != nil {
+		log.Errorf("Unable to list containers: %v", err)
+		return
+	}
+	AUDCH.HostNow = make(App)
+	for _, v := range list {
+		AUDCH.HostNowData = v
+		if AUDCH.ReturnName() == "audch.docker.shared" {
+			continue
+		}
+		AUDCH.GetIPAddress()
+		AUDCH.CheckNetWork()
+		AUDCH.CheckHostnameV2() // 马勒戈壁，[Nginx Does Not Resolve HostName](https://forums.docker.com/t/nginx-does-not-resolve-hostname/115859)
+	}
+	for i := 0; i < len(list); i++ {
+		AUDCH.HostNowData = list[i]
+	}
+}
+
+func (AUDCHAPP) GetHostBytes() {
+	// HostBytes
+	AUDCH.HostBytes, err = ioutil.ReadFile(*defaultHostsFile)
+	if err != nil {
+		log.Errorf("Failed to read %v: %v", defaultHostsFile, err)
+		return
+	}
+}
+
+func (AUDCHAPP) GetHostAll() {
+	AUDCH.HostAll = strings.Split(string(AUDCH.HostBytes), "\n")
+}
+
+func (AUDCHAPP) GetHostLast() {
+	AUDCH.HostLast = make(App)
+	//for k, v := range HostAll {
+	for i := 0; i < len(AUDCH.HostAll); i++ {
+		if strings.Contains(AUDCH.HostAll[i], "# AUDCH") {
+			row := strings.Split(AUDCH.HostAll[i], "\t")
+			if len(row) != 3 {
+				return
+			}
+			name := strings.Replace(row[1], " ", "", -1)
+			ipaddress := strings.Replace(row[0], " ", "", -1)
+			AUDCH.HostLast[name] = ipaddress
+			if !strings.Contains(strings.Replace(row[1], " ", "", -1), "docker.shared") {
+				log.Errorf("alias not match, please check: %v", name)
+			}
+			AUDCH.HostAll = append(AUDCH.HostAll[:i], AUDCH.HostAll[i+1:]...)
+			i--
+		}
+		if i != 0 && AUDCH.HostAll[i] == AUDCH.HostAll[i-1] && AUDCH.HostAll[i] == "" {
+			AUDCH.HostAll = append(AUDCH.HostAll[:i], AUDCH.HostAll[i+1:]...)
+			i--
+		}
+	}
+}
+
+func (AUDCHAPP) GetHostDiff() {
+	del := 0
+	update := 0
+	for k, v := range AUDCH.HostLast {
+		if h, ok := AUDCH.HostNow[k]; !ok {
+			log.Infof("Del: %v %v", k, v)
+			del++
+		} else {
+			if h != v {
+				log.Infof("Update: [%v %v] -> %v", k, v, h)
+				update++
+			}
+		}
+	}
+
+	if len(AUDCH.HostLast) != 0 && del == 0 && update == 0 {
+		log.Infoln("Nothing to update")
+		return
+	}
+	log.Infof("Last %v、Del: %v、Update: %v records", len(AUDCH.HostLast), del, len(AUDCH.HostNow)-update)
+
+	for k, v := range AUDCH.HostNow {
+		AUDCH.HostAll = append(AUDCH.HostAll, v+"\t"+k+"\t# AUDCH")
+	}
+}
+
+func (AUDCHAPP) GetHostStr() {
+	AUDCH.HostStr = ""
+	for _, v := range AUDCH.HostAll {
+		AUDCH.HostStr += v + "\n"
+	}
+}
+
+func (AUDCHAPP) HostWrite() {
+	err = ioutil.WriteFile(*defaultHostsFile, []byte(AUDCH.HostStr), 0644)
+	if err != nil {
+		log.Errorf("Failed to write %v, %v", *defaultHostsFile, err)
+		return
+	}
+}
+
+func server() {
+	AUDCH.ClientDocker()
+	AUDCH.GetBridge()
+	AUDCH.GetHostNow()
+	AUDCH.GetHostBytes()
+	AUDCH.GetHostAll()
+	AUDCH.GetHostLast()
+	AUDCH.GetHostDiff()
+	AUDCH.GetHostStr()
+	AUDCH.HostWrite()
+}
+
+func main() {
+	server() // Run once when starting up
+	c := cron.New()
+	if _, err = c.AddFunc("*/5 * * * *", func() {
+		server()
+	}); err != nil {
+		log.Errorf("Cron Add Error: [%v]", err)
+	}
+	log.Infof("Cron Start")
+	//启动定时器
+	c.Run()
 }
