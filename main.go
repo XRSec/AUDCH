@@ -288,7 +288,6 @@ func (AUDCHAPP) GetHostAll() {
 
 func (AUDCHAPP) GetHostLast() {
 	AUDCH.HostLast = make(App)
-	//for k, v := range HostAll {
 	for i := 0; i < len(AUDCH.HostAll); i++ {
 		if strings.Contains(AUDCH.HostAll[i], "# AUDCH") {
 			row := strings.Split(AUDCH.HostAll[i], "\t")
@@ -352,6 +351,7 @@ func (AUDCHAPP) HostWrite() {
 		log.Errorf("Failed to write %v, %v", *defaultHostsFile, err)
 		return
 	}
+	log.Infof("Write %v success", *defaultHostsFile)
 }
 
 func server() {
