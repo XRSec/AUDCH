@@ -335,6 +335,8 @@ func (AUDCHAPP) GetHostDiff() {
 	for k, v := range AUDCH.HostNow {
 		AUDCH.HostAll = append(AUDCH.HostAll, v+"\t"+k+"\t# AUDCH")
 	}
+	AUDCH.GetHostStr()
+	AUDCH.HostWrite()
 }
 
 func (AUDCHAPP) GetHostStr() {
@@ -360,8 +362,6 @@ func server() {
 	AUDCH.GetHostAll()
 	AUDCH.GetHostLast()
 	AUDCH.GetHostDiff()
-	AUDCH.GetHostStr()
-	AUDCH.HostWrite()
 }
 
 func main() {
