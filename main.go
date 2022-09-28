@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -78,6 +79,9 @@ func (AUDCHAPP) GetBridge() {
 		if v.Name == "bridge" {
 			AUDCH.BridgeNetwork = v
 		}
+		if v.Name == "host" {
+
+		}
 	}
 	if AUDCH.BridgeNetwork.ID == "" {
 		log.Errorln("bridgeID is empty")
@@ -85,7 +89,7 @@ func (AUDCHAPP) GetBridge() {
 	}
 }
 
-// CheckHostnameV1 commit container to image
+// Deprecated: CheckHostnameV1 commit container to image
 func (AUDCHAPP) CheckHostnameV1() {
 	name := AUDCH.ReturnName()
 	inspect, err := AUDCH.Cli.ContainerInspect(context.Background(), AUDCH.HostNowData.ID)
@@ -160,7 +164,7 @@ func (AUDCHAPP) CheckHostnameV1() {
 	log.Infof("Update hostname: %v", name)
 }
 
-// CheckHostnameV2 delete container and create new container
+// Deprecated: CheckHostnameV2 delete container and create new container
 func (AUDCHAPP) CheckHostnameV2() {
 	if !AUDCH.Recreate {
 		return
@@ -229,14 +233,38 @@ func (AUDCHAPP) ReturnName() string {
 }
 
 func (AUDCHAPP) GetIPAddress() {
-	for _, v := range AUDCH.HostNowData.NetworkSettings.Networks {
-		if v.IPAddress != "" {
-			AUDCH.HostNow[AUDCH.ReturnName()] = v.IPAddress
-		}
-		break // 只记录第一个IP
+	if AUDCH.HostNowData.HostConfig.NetworkMode == "host" {
+		AUDCH.HostNow[AUDCH.ReturnName()] = AUDCH.BridgeNetwork.IPAM.Config[0].Gateway // 172.17.0.1 like 127.0.0.1
+		goto check
+	}
+	if k, ok := AUDCH.HostNowData.NetworkSettings.Networks["bridge"]; ok {
+		AUDCH.HostNow[AUDCH.ReturnName()] = k.IPAddress
+	} else {
+		AUDCH.ConnectBridgeNetWork()
+		AUDCH.GetIPAddress()
+		// 等待下次执行
+	}
+check:
+	if AUDCH.HostNow[AUDCH.ReturnName()] == "" {
+		log.Infof("GetIPAddress Error: [%v]", AUDCH.HostNowData)
 	}
 }
 
+func (AUDCHAPP) ConnectBridgeNetWork() {
+	err := AUDCH.Cli.NetworkConnect(context.Background(), AUDCH.BridgeNetwork.ID, AUDCH.HostNowData.ID, nil)
+	if err != nil {
+		log.Errorf("Unable connect to bridge network, name: %v, error: %v", AUDCH.ReturnName(), err)
+		return
+	}
+	log.Infof("Connect bridge NetWork: %v", AUDCH.ReturnName())
+	inspect, err := AUDCH.Cli.ContainerInspect(context.Background(), AUDCH.HostNowData.ID)
+	if err != nil {
+		return
+	}
+	AUDCH.HostNowData.NetworkSettings.Networks = inspect.NetworkSettings.Networks
+}
+
+// Deprecated: Use ConnectBridgeNetWork instead.
 func (AUDCHAPP) CheckNetWork() {
 	if h1 := AUDCH.HostNowData.HostConfig.NetworkMode; h1 == "host" || strings.Contains(h1, "default") { // TODO 修复容器网络模式  二选一
 		return
@@ -248,7 +276,6 @@ func (AUDCHAPP) CheckNetWork() {
 			return
 		}
 	}
-
 }
 
 func (AUDCHAPP) GetHostNow() {
@@ -265,16 +292,14 @@ func (AUDCHAPP) GetHostNow() {
 			continue
 		}
 		AUDCH.GetIPAddress()
-		AUDCH.CheckNetWork()
 		AUDCH.CheckHostnameV2() // 马勒戈壁，[Nginx Does Not Resolve HostName](https://forums.docker.com/t/nginx-does-not-resolve-hostname/115859)
 	}
-	for i := 0; i < len(list); i++ {
-		AUDCH.HostNowData = list[i]
-	}
+	//for i := 0; i < len(list); i++ {
+	//	AUDCH.HostNowData = list[i]
+	//}
 }
 
 func (AUDCHAPP) GetHostBytes() {
-	// HostBytes
 	AUDCH.HostBytes, err = ioutil.ReadFile(*defaultHostsFile)
 	if err != nil {
 		log.Errorf("Failed to read %v: %v", defaultHostsFile, err)
@@ -283,11 +308,13 @@ func (AUDCHAPP) GetHostBytes() {
 }
 
 func (AUDCHAPP) GetHostAll() {
+	AUDCH.GetHostBytes()
 	AUDCH.HostAll = strings.Split(string(AUDCH.HostBytes), "\n")
 }
 
 func (AUDCHAPP) GetHostLast() {
 	AUDCH.HostLast = make(App)
+	AUDCH.GetHostAll()
 	for i := 0; i < len(AUDCH.HostAll); i++ {
 		if strings.Contains(AUDCH.HostAll[i], "# AUDCH") {
 			row := strings.Split(AUDCH.HostAll[i], "\t")
@@ -313,6 +340,10 @@ func (AUDCHAPP) GetHostLast() {
 func (AUDCHAPP) GetHostDiff() {
 	del := 0
 	update := 0
+	if reflect.DeepEqual(AUDCH.HostLast, AUDCH.HostNow) {
+		log.Infoln("Nothing to update")
+		return
+	}
 	for k, v := range AUDCH.HostLast {
 		if h, ok := AUDCH.HostNow[k]; !ok {
 			log.Infof("Del: %v %v", k, v)
@@ -325,7 +356,7 @@ func (AUDCHAPP) GetHostDiff() {
 		}
 	}
 
-	if len(AUDCH.HostLast) != 0 && del == 0 && update == 0 {
+	if len(AUDCH.HostLast) != 0 && del == 0 && update == 0 && len(AUDCH.HostNow) == len(AUDCH.HostLast) {
 		log.Infoln("Nothing to update")
 		return
 	}
@@ -358,8 +389,6 @@ func server() {
 	AUDCH.ClientDocker()
 	AUDCH.GetBridge()
 	AUDCH.GetHostNow()
-	AUDCH.GetHostBytes()
-	AUDCH.GetHostAll()
 	AUDCH.GetHostLast()
 	AUDCH.GetHostDiff()
 }
