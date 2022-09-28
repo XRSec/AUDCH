@@ -4,16 +4,17 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/docker/distribution/context"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/robfig/cron/v3"
 	log "github.com/sirupsen/logrus"
-	"io/ioutil"
-	"os"
-	"strings"
-	"time"
 )
 
 type (
@@ -303,7 +304,7 @@ func (AUDCHAPP) GetHostLast() {
 			AUDCH.HostAll = append(AUDCH.HostAll[:i], AUDCH.HostAll[i+1:]...)
 			i--
 		}
-		if i != 0 && AUDCH.HostAll[i] == AUDCH.HostAll[i-1] && AUDCH.HostAll[i] == "" {
+		if i > 0 && AUDCH.HostAll[i] == AUDCH.HostAll[i-1] && AUDCH.HostAll[i] == "" {
 			AUDCH.HostAll = append(AUDCH.HostAll[:i], AUDCH.HostAll[i+1:]...)
 			i--
 		}
