@@ -14,4 +14,4 @@ LABEL Github="https://github.com/XRSec/AUDCH"
 LABEL org.opencontainers.image.source="https://github.com/XRSec/AUDCH"
 LABEL org.opencontainers.image.title="AUDCH"
 COPY --from=builder /audch/audch /audch
-ENTRYPOINT ["/audch", "-f", "/opt/hosts"]
+ENTRYPOINT ["/audch", "-f", "/hosts"]
