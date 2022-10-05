@@ -1,0 +1,160 @@
+name: AUDCH Docker Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Set tag'
+        required: false
+        type: string
+  push:
+    branches: [ main ]
+    paths: # 这里是用来指定哪个文件更改，才会触发的
+      - 'main.go'
+      - 'Dockerfile'
+      - '.github/workflows/**'
+
+jobs:
+  DockerBuild:
+    name: AUDCH Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Private Actions Checkout
+        uses: actions/checkout@v3
+      -
+        name: Get tag id
+        id: tag
+        run: |
+          if [[ "${{ github.event.inputs.tag }}"  != '' ]]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="$(echo "IyEvdXNyL2Jpbi9lbnYgYmFzaAoKZGVjbGFyZSAtYSBwYXJ0PSggJHt2ZXJzaW9uLy9cLi8gfSApCmRlY2xhcmUgICAgbmV3CmRlY2xhcmUgLWkgY2Fycnk9MSAj6YCS5aKe6YePCgpmb3IgKCggQ05UUj0keyNwYXJ0W0BdfS0xOyBDTlRSPj0wOyBDTlRSLT0xICkpOyBkbwogIGxlbj0keyNwYXJ0W0NOVFJdfQogIG5ldz0kKChwYXJ0W0NOVFJdK2NhcnJ5KSkKICBpZiBbWyAiJHtuZXd9IiA9PSAiNCIgXV07IHRoZW4KICAgIG5ldz0kKChuZXcrY2FycnkpKQogIGZpCiAgWyAkeyNuZXd9IC1ndCAkbGVuIF0gJiYgY2Fycnk9MSB8fCBjYXJyeT0wCiAgWyAkQ05UUiAtZ3QgMCBdICYmIHBhcnRbQ05UUl09JHtuZXc6IC1sZW59IHx8IHBhcnRbQ05UUl09JHtuZXd9CmRvbmUKbmV3PSIke3BhcnRbKl19IgplY2hvIC1lICIke25ldy8vIC8ufSI=" | base64 -d | version=$(curl -s https://api.github.com/repos/XRSec/AUDCH/releases/latest | jq -r '.tag_name') bash)"
+            if [[ "${tag}" == '' ]]; then
+              exit 1
+            fi
+          fi
+          echo $tag
+          echo "::set-output name=dir::${tag}"
+      -
+        name: Build with xgo
+        uses: crazy-max/ghaction-xgo@v2
+        with:
+          xgo_version: latest
+          go_version: ${{ matrix.go_version }}
+          dest: bin
+          prefix: Audch
+          targets: android/386, android/amd64, android/arm, android/arm64, darwin/amd64, darwin/arm64, freebsd/386, freebsd/amd64, freebsd/arm, freebsd/arm64, linux/386, linux/amd64, linux/arm, linux/arm64, linux/mips, linux/mips64, linux/mips64le, linux/mipsle, linux/ppc64, linux/ppc64le, linux/riscv64, linux/s390x, netbsd/386, netbsd/amd64, netbsd/arm, netbsd/arm64, openbsd/386, openbsd/amd64, openbsd/arm, openbsd/arm64, openbsd/mips64, windows/386, windows/amd64, windows/arm, windows/arm64
+          v: false
+          x: false
+          race: false
+          ldflags: -s -w -X main.versionData=${{ steps.tag.outputs.dir }}
+          buildmode: default
+      -
+        name: Delete old Releases
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          repo: ${{ github.repository }}
+          keep_latest: 3
+          delete_tag_pattern: ""
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
+      -
+        name: Docker Setup QEMU
+        uses: docker/setup-qemu-action@v1
+      -
+        name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v1
+      -
+        name: Docker Login in Aliyun
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ secrets.DOCKERHUB_REGISTRY_ALIYUN }}
+          username: ${{ secrets.DOCKERHUB_ACCOUNT_ALIYUN }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD_ALIYUN }}
+      -
+        name: Docker Login
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      -
+        name: Log in to the Container registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.TOKEN_GITHUB }}
+      -
+        name: Build and push Docker images
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/audch:latest
+            ghcr.io/${{ secrets.DOCKERHUB_USERNAME }}/audch:latest
+            ${{ secrets.DOCKERHUB_REGISTRY_ALIYUN }}/${{ secrets.DOCKERHUB_USERNAME }}/audch:latest
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audch:latest.cache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audch:latest.cache,mode=max
+      -
+        name: Make release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "bin/**"
+          body_path: docs/UPDATE.md
+          draft: false
+          name: AUDCH v${{ steps.tag.outputs.dir }}
+          tag_name: ${{ steps.tag.outputs.dir }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
+      -
+        name: Get Data
+        id: getDingData
+        run: |
+          set -ex
+          # 输出仓库名
+          REPOSITORY="${{GITHUB.REPOSITORY}}"
+          echo "::set-output name=REPOSITORY::${REPOSITORY#*/}"
+
+          # 获取用户仓库信息
+          # RESPONSE="$(curl -sLm 10 https://api.github.com/repos/${{ GITHUB.REPOSITORY }})"
+          # 建议填写自己的 TOKEN
+          RESPONSE="$(curl -sLm 10 https://api.github.com/repos/${{ GITHUB.REPOSITORY }} -H "Authorization: token ${{ SECRETS.TOKEN_GITHUB }}")"
+
+          # 获取 用户仓库 设置的 描述，如果为空，可能是没有使用 TOKEN
+          DESCRIPTION="$(jq -r .description <(echo ${RESPONSE}))"
+          echo "::set-output name=DESCRIPTION::${DESCRIPTION}"
+
+          # 获取 用户仓库 设置的 URL, 如果没有就输出 Github 地址
+          URL="$(jq -r .homepage <(echo ${RESPONSE}))"
+          if [[ "${URL}" == "null" || "${URL}" == "" ]]; then
+            echo "::set-output name=URL::${{ GITHUB.SERVER_URL }}/${{ GITHUB.REPOSITORY }}"
+          else
+            echo "::set-output name=URL::${URL}"
+          fi
+      -
+        name: Send dingding notify
+        uses: zcong1993/actions-ding@master
+        with:
+          dingToken: ${{ SECRETS.DING_TOKEN }}
+          secret: ${{ SECRETS.DING_SECRET }}
+          body: |
+            {
+              "msgtype": "link",
+              "link": {
+                  "text": "${{ steps.getDingData.outputs.DESCRIPTION }}",
+                  "title":  "${{ steps.getDingData.outputs.REPOSITORY }} WorkFlow ${{ GITHUB.JOB }} Success!",
+                  "picUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
+                  "messageUrl": "${{ steps.getDingData.outputs.URL }}"
+              }
+            }
+      -
+        name: Docker Hub Description
+        uses: peter-evans/dockerhub-description@v3
+        with:
+          username: ${{ SECRETS.DOCKERHUB_USERNAME }}
+          password: ${{ SECRETS.DOCKERHUB_PASSWORD }}
+          repository: ${{ SECRETS.DOCKERHUB_USERNAME }}/audch
+          readme-filepath: docs/README.md
