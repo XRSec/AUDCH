@@ -20,7 +20,8 @@ Audch -c /etc/hosts # don't use dnsmasq
 Audch --install # shell auto-completion install
 Audch --uninstall # shell auto-completion uninstall
 
-Audch -c /opt/dnsmasq/hosts -e dnsmasq -c /opt/dnsmasq/hosts -c /opt/dnsmasq/dnsmasq.conf -p 80 -- dnsmasq --no-daemon # use dnsmasq
+Audch -c /opt/audch/hosts -e dnsmasq -c /opt/audch/hosts -p 80 -- dnsmasq --no-daemon # use dnsmasq
+Audch -c /opt/audch/hosts -e dnsmasq -c /opt/audch/hosts -c /opt/dnsmasq/dnsmasq.conf -p 80 -- dnsmasq --no-daemon # use dnsmasq
 
 ... # more
 ```
@@ -34,8 +35,8 @@ Audch -c /opt/dnsmasq/hosts -e dnsmasq -c /opt/dnsmasq/hosts -c /opt/dnsmasq/dns
 ```
 
 ```bash
-mkdir dnsmasq
-touch dnsmasq/hosts
+mkdir audch
+touch audch/hosts
 docker run -itd \
   --name audch \
   --restart=always \
@@ -44,7 +45,7 @@ docker run -itd \
   -p 53:53/udp \
   -e "HTTP_USER=admin" \
   -e "HTTP_PASS=123456" \
-  -v ./dnsmasq/hosts:/hosts \
+  -v ./audch/hosts:/hosts \
   -v /var/run/docker.sock:/var/run/docker.sock \
   xrsec/audch
 ```

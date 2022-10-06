@@ -7,8 +7,8 @@
 ## USE
 
 ```bash
-mkdir dnsmasq
-touch dnsmasq/hosts
+mkdir audch
+touch audch/hosts
 docker run -itd \
   --name audch \
   --restart=always \
@@ -17,7 +17,7 @@ docker run -itd \
   -p 53:53/udp \
   -e "HTTP_USER=admin" \
   -e "HTTP_PASS=123456" \
-  -v ./dnsmasq/hosts:/hosts \
+  -v ./audch/hosts:/hosts \
   -v /var/run/docker.sock:/var/run/docker.sock \
   xrsec/audch
   ```
