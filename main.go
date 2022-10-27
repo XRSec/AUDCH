@@ -2,29 +2,23 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
+	"github.com/robfig/cron/v3"
+	log "github.com/sirupsen/logrus"
 	"io/ioutil"
-	"net/http"
+	"net"
 	"os"
 	"reflect"
 	"strings"
-
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
-	"github.com/jpillora/opts"
-	"github.com/jpillora/webproc/agent"
-	"github.com/robfig/cron/v3"
-	log "github.com/sirupsen/logrus"
 )
 
 type (
-	AudchMap  map[string]string
-	AudchOpts struct {
-		HostsFile     string `opts:"help=hosts file to use for country lookups, short=c, default=/etc/hosts"`
-		EnableDnsmasq bool   `opts:"help=enable dnsmasq, default=false"`
-		agent.Config  `opts:"mode=cmd, help=enable dnsmasq, name=dnsmasq"`
-	}
+	AudchMap map[string]string
 	AudchApp struct {
+		defaultHost                                                     string
 		Recreate                                                        bool
 		HostBytes                                                       []byte // hosts Byte 内容
 		HostAll                                                         []string
@@ -32,25 +26,39 @@ type (
 		Cli                                                             *client.Client
 		HostNowData                                                     types.Container
 		HostStr, Name, DnsmasqID, BridgeNetworkID, BridgeNetworkGateway string
-		AudchOpts
 	}
 )
 
 var (
-	versionData string
-	err         error
-	Audch       AudchApp
+	err              error
+	Audch            AudchApp
+	version          = flag.Bool("v", false, "show version")
+	defaultHostsFile = flag.String("f", "/etc/hosts", "hosts filepath")
+	Debug            = flag.Bool("d", false, "debug")
+	buildTime        = "2022-10-14/09:52:49"
+	author           = "XRSec"
+	commitId         = "2de23d5054449f77ae88c8c3371586b3e0a941c4"
+	versionData      = "preview"
 )
 
 func init() {
-	opts.New(&Audch.AudchOpts).Name("Audch").PkgRepo().Version(versionData).Complete().Parse()
-	if Audch.HostsFile == "" {
-		Audch.HostsFile = "/etc/hosts"
+	flag.Parse()
+	// Version
+	if *version {
+		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "Version:", versionData)
+		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "BuildTime:", buildTime)
+		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "Author:", author)
+		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "CommitId:", commitId)
+		os.Exit(0)
 	}
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:   true,
 		TimestampFormat: "2006-01-02 15:04:05",
 	})
+
+	if *Debug {
+		DebugModel()
+	}
 }
 
 func (AudchApp) ClientDocker() {
@@ -130,9 +138,9 @@ func (AudchApp) GetHostNow() {
 }
 
 func (AudchApp) GetHostBytes() {
-	Audch.HostBytes, err = ioutil.ReadFile(Audch.HostsFile)
+	Audch.HostBytes, err = ioutil.ReadFile(*defaultHostsFile)
 	if err != nil {
-		log.Errorf("Failed to read %v: %v", Audch.HostsFile, err)
+		log.Errorf("Failed to read %v: %v", *defaultHostsFile, err)
 		return
 	}
 }
@@ -197,7 +205,6 @@ func (AudchApp) GetHostDiff() {
 	}
 	Audch.GetHostStr()
 	Audch.HostWrite()
-	Audch.DnsmasqRestart()
 }
 
 func (AudchApp) GetHostStr() {
@@ -208,30 +215,48 @@ func (AudchApp) GetHostStr() {
 }
 
 func (AudchApp) HostWrite() {
-	err = ioutil.WriteFile(Audch.HostsFile, []byte(Audch.HostStr), 0644)
+	err = ioutil.WriteFile(*defaultHostsFile, []byte(Audch.HostStr), 0644)
 	if err != nil {
-		log.Errorf("Failed to write %v, %v", Audch.HostsFile, err)
+		log.Errorf("Failed to write %v, %v", *defaultHostsFile, err)
 		return
 	}
-	log.Infof("Write %v success", Audch.HostsFile)
+	log.Infof("Write %v success", *defaultHostsFile)
 }
-func (AudchApp) DnsmasqRestart() {
-	if !Audch.EnableDnsmasq {
-		return
-	}
-	//curl -u admin:admin 'http://127.0.0.1:80/restart' -X 'PUT'
-	req, err := http.NewRequest("PUT", fmt.Sprintf("http://127.0.0.1:%v/restart", Audch.Port), nil)
+
+func DebugModel() {
+	log.Infof("DebugModel Start.")
+	defer func() {
+		os.Exit(1)
+	}()
+
+	udpServer, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 53})
 	if err != nil {
-		log.Errorf("Unable To Create Restart Request: %v", err)
+		log.Errorf("Failed to setup the udp server: %s\n", err.Error())
 		return
 	}
-	req.SetBasicAuth(Audch.User, Audch.Pass)
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Errorf("Unable To Send Restart Message To Server: %v", err)
-		return
+	defer func() {
+		if err := udpServer.Close(); err != nil {
+			log.Errorf("Failed to close the udp server: %s\n", err.Error())
+			return
+		}
+	}()
+
+	for {
+		buf := make([]byte, 1024)
+		n, remoteAddr, err := udpServer.ReadFromUDP(buf)
+		if err != nil {
+			log.Errorf("Failed to read from udp server: %s\n", err.Error())
+			return
+		}
+		if n <= 0 {
+			continue
+		}
+		log.Infof("get: \n  {\n\tn: %v,\n\tremoteAddr: %v,\n\tbytes: %v\n  }\n", n, remoteAddr, string(buf))
+		if _, err := udpServer.WriteToUDP([]byte("Hello Word"), remoteAddr); err != nil {
+			log.Errorf("Failed to write to udp server: %s\n", err.Error())
+			return
+		}
 	}
-	log.Infof("Restart dnsmasq: %v", res.Status)
 }
 
 func audchServer() {
@@ -242,25 +267,9 @@ func audchServer() {
 	Audch.GetHostDiff()
 }
 
-func dnsmasqServer() {
-	args := Audch.ProgramArgs
-	if len(args) == 1 {
-		path := args[0]
-		if info, err := os.Stat(path); err == nil && info.Mode()&0111 == 0 {
-			Audch.ProgramArgs = nil
-			if err := agent.LoadConfig(path, &Audch.Config); err != nil {
-				log.Fatalf("[webproc] load config error: %s", err)
-			}
-		}
-	}
-	//validate and apply defaults
-	if err := agent.ValidateConfig(&Audch.Config); err != nil {
-		log.Fatalf("[webproc] load config error: %s", err)
-	}
-	//server listener
-	if err := agent.Run(versionData, Audch.Config); err != nil {
-		log.Fatalf("[webproc] agent error: %s", err)
-	}
+func dnsServer() {
+	// 本着极限的原则，我准备自己写一个 精简版的dns_server，但是目前已有的库都存在一个问题，无法解析，也许是我姿势不对，如果你有办法，请 提交 issues
+	// 关于一些 库 可以参考 docs/Deprecated.md 中的 DNS 下面的 dnsServer
 }
 
 func main() {
@@ -271,13 +280,9 @@ func main() {
 	}); err != nil {
 		log.Errorf("Cron Add Error: [%v]", err)
 	}
+	//启动定时器
+	c.Start()
 	log.Infof("Cron Start")
 
-	//启动定时器
-	if Audch.EnableDnsmasq {
-		c.Start()
-		dnsmasqServer()
-	} else {
-		c.Run()
-	}
+	dnsServer()
 }

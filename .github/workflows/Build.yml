@@ -37,6 +37,15 @@ jobs:
           echo $tag
           echo "::set-output name=dir::${tag}"
       -
+        name: Get Data
+        id: time
+        run: echo "::set-output name=dir::$(date +'%Y-%m-%d/%H:%M:%S')"
+      -
+        name: Get commitId
+        id: commitId
+        run:
+          echo "::set-output name=dir::$(git rev-parse HEAD)"
+      -
         name: Build with xgo
         uses: crazy-max/ghaction-xgo@v2
         with:
@@ -48,7 +57,7 @@ jobs:
           v: false
           x: false
           race: false
-          ldflags: -s -w -X main.versionData=${{ steps.tag.outputs.dir }}
+          ldflags: -s -w -X main.versionData=${{ steps.tag.outputs.dir }} -X main.buildTime=${{ steps.time.outputs.dir }} -X main.commitId=${{ steps.commitId.outputs.dir }} -X main.author=XRSec
           buildmode: default
       -
         name: Delete old Releases
