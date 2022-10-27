@@ -54,3 +54,8 @@ docker run -itd \
 
 - [ ] ~~regester service~~
 - [x] [fix nginx resolv](https://github.com/XRSec/AUDCH/issues/1)
+- [ ] 精简内存大小
+
+![stats1](/docs/images/stats1.png)
+
+![stats2](/docs/images/stats2.png)
