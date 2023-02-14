@@ -71,12 +71,17 @@ func (AudchApp) GetBridge() {
 	for _, v := range networkList {
 		if v.Name == "bridge" {
 			Audch.BridgeNetworkID = v.ID
-			Audch.BridgeNetworkGateway = v.IPAM.Config[0].Gateway
+			for _, v1 := range v.IPAM.Config {
+				if v1.Gateway != "" {
+					Audch.BridgeNetworkGateway = v1.Gateway
+					break
+				}
+			}
 		}
 	}
 	if Audch.BridgeNetworkID == "" || Audch.BridgeNetworkGateway == "" {
 		log.Errorln("bridgeID/bridgeIP is empty")
-		return
+		os.Exit(1)
 	}
 }
 
