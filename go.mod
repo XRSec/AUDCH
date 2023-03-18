@@ -6,7 +6,6 @@ require (
 	github.com/docker/docker v20.10.18+incompatible
 	github.com/jpillora/opts v1.2.2
 	github.com/jpillora/webproc v0.4.0
-	github.com/robfig/cron/v3 v3.0.1
 	github.com/sirupsen/logrus v1.9.0
 )
 

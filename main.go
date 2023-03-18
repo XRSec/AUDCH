@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"reflect"
@@ -13,7 +12,6 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/jpillora/opts"
 	"github.com/jpillora/webproc/agent"
-	"github.com/robfig/cron/v3"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -25,8 +23,8 @@ type (
 		agent.Config  `opts:"mode=cmd, help=enable dnsmasq, name=dnsmasq"`
 	}
 	AudchApp struct {
-		Recreate                                                        bool
-		HostBytes                                                       []byte // hosts Byte 内容
+		lastStatus                                                      map[string]string // 创建容器有两个事件，再创建容器的时候容器并不存在与容器列表，所以还需监听start事件
+		HostBytes                                                       []byte
 		HostAll                                                         []string
 		HostNow, HostLast                                               AudchMap
 		Cli                                                             *client.Client
@@ -42,6 +40,7 @@ var (
 	Audch       AudchApp
 )
 
+// 初始化日志方法
 func init() {
 	opts.New(&Audch.AudchOpts).Name("Audch").PkgRepo().Version(versionData).Complete().Parse()
 	if Audch.HostsFile == "" {
@@ -53,6 +52,7 @@ func init() {
 	})
 }
 
+// ClientDocker 连接客户端
 func (AudchApp) ClientDocker() {
 	Audch.Cli, err = client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
@@ -62,12 +62,52 @@ func (AudchApp) ClientDocker() {
 	log.Infoln("Successfully connected to Docker")
 }
 
+// EventListen 监听事件
+func (AudchApp) EventListen() {
+	log.Infoln("EventListen")
+	msgs, errs := Audch.Cli.Events(context.Background(), types.EventsOptions{})
+
+	for {
+		select {
+		case err := <-errs:
+			log.Infoln("err", err)
+		case msg := <-msgs:
+			// 非容器事件跳过
+			if msg.Type != "container" {
+				break
+			}
+			// 非创建/销毁事件跳过
+			tmpName := msg.Actor.Attributes["name"]
+			if msg.Action == "create" {
+				Audch.lastStatus[tmpName] = msg.Action
+				break
+			}
+			if (msg.Action == "start" && Audch.lastStatus[tmpName] == "create") || msg.Action == "destroy" {
+			} else {
+				break
+			}
+
+			log.Infoln(msg.Action, msg.Actor.Attributes["name"])
+			Audch.GetHostNow()
+			Audch.GetHostLast()
+			Audch.GetHostDiff()
+			delete(Audch.lastStatus, msg.Actor.Attributes["name"])
+			break
+
+		}
+	}
+}
+
+// GetBridge 获取桥接网络的网关
 func (AudchApp) GetBridge() {
 	networkList, err := Audch.Cli.NetworkList(context.Background(), types.NetworkListOptions{})
 	if err != nil {
 		log.Errorf("Unable to get bridge network, error: %v", err)
 		return
 	}
+
+	Audch.lastStatus = make(map[string]string)
+
 	for _, v := range networkList {
 		if v.Name == "bridge" {
 			Audch.BridgeNetworkID = v.ID
@@ -85,10 +125,12 @@ func (AudchApp) GetBridge() {
 	}
 }
 
+// ReturnName 获取容器名称
 func (AudchApp) ReturnName() string {
 	return strings.Replace(Audch.HostNowData.Names[len(Audch.HostNowData.Names)-1], "/", "", -1) + ".docker.shared" // TODO name: ["/adminer/db", "mysql"] *docker run --link
 }
 
+// GetIPAddress 获取容器IP
 func (AudchApp) GetIPAddress() {
 	if Audch.HostNowData.HostConfig.NetworkMode == "host" {
 		Audch.HostNow[Audch.ReturnName()] = Audch.BridgeNetworkGateway // 172.17.0.1 like 127.0.0.1
@@ -107,6 +149,7 @@ check:
 	}
 }
 
+// ConnectBridgeNetWork 连接桥接网络
 func (AudchApp) ConnectBridgeNetWork() {
 	err := Audch.Cli.NetworkConnect(context.Background(), Audch.BridgeNetworkID, Audch.HostNowData.ID, nil)
 	if err != nil {
@@ -121,11 +164,14 @@ func (AudchApp) ConnectBridgeNetWork() {
 	Audch.HostNowData.NetworkSettings.Networks = inspect.NetworkSettings.Networks
 }
 
+// GetHostNow 获取当前容器
 func (AudchApp) GetHostNow() {
-	// hostNow
+	// 容器列表
 	list, err := Audch.Cli.ContainerList(context.Background(), types.ContainerListOptions{})
 	if err != nil {
 		log.Errorf("Unable to list containers: %v", err)
+		Audch.ClientDocker() // 重新连接
+		Audch.GetHostNow()
 		return
 	}
 	Audch.HostNow = make(AudchMap)
@@ -135,7 +181,7 @@ func (AudchApp) GetHostNow() {
 }
 
 func (AudchApp) GetHostBytes() {
-	Audch.HostBytes, err = ioutil.ReadFile(Audch.HostsFile)
+	Audch.HostBytes, err = os.ReadFile(Audch.HostsFile)
 	if err != nil {
 		log.Errorf("Failed to read %v: %v", Audch.HostsFile, err)
 		return
@@ -191,11 +237,18 @@ func (AudchApp) GetHostDiff() {
 		}
 	}
 
+	for k, v := range Audch.HostNow {
+		if _, ok := Audch.HostLast[k]; !ok {
+			log.Infof("Add: %v %v", k, v)
+			update++
+		}
+	}
+
 	if len(Audch.HostLast) != 0 && del == 0 && update == 0 && len(Audch.HostNow) == len(Audch.HostLast) {
 		log.Infoln("Nothing to update")
 		return
 	}
-	log.Infof("Last %v、Del: %v、Update: %v records", len(Audch.HostLast), del, len(Audch.HostNow)-update)
+	log.Infof("Last %v、Del: %v、Update: %v records", len(Audch.HostLast), del, update)
 
 	for k, v := range Audch.HostNow {
 		Audch.HostAll = append(Audch.HostAll, v+"\t"+k+"\t# Audch")
@@ -213,12 +266,12 @@ func (AudchApp) GetHostStr() {
 }
 
 func (AudchApp) HostWrite() {
-	err = ioutil.WriteFile(Audch.HostsFile, []byte(Audch.HostStr), 0644)
+	err = os.WriteFile(Audch.HostsFile, []byte(Audch.HostStr), 0644)
 	if err != nil {
 		log.Errorf("Failed to write %v, %v", Audch.HostsFile, err)
 		return
 	}
-	log.Infof("Write %v success", Audch.HostsFile)
+	log.Debugf("Write %v success", Audch.HostsFile)
 }
 func (AudchApp) DnsmasqRestart() {
 	if !Audch.EnableDnsmasq {
@@ -237,14 +290,6 @@ func (AudchApp) DnsmasqRestart() {
 		return
 	}
 	log.Infof("Restart dnsmasq: %v", res.Status)
-}
-
-func audchServer() {
-	Audch.ClientDocker()
-	Audch.GetBridge()
-	Audch.GetHostNow()
-	Audch.GetHostLast()
-	Audch.GetHostDiff()
 }
 
 func dnsmasqServer() {
@@ -269,20 +314,16 @@ func dnsmasqServer() {
 }
 
 func main() {
-	audchServer() // Run once when starting up
-	c := cron.New()
-	if _, err = c.AddFunc("*/5 * * * *", func() {
-		audchServer()
-	}); err != nil {
-		log.Errorf("Cron Add Error: [%v]", err)
-	}
-	log.Infof("Cron Start")
+	Audch.ClientDocker()
+	Audch.GetBridge()
+	Audch.GetHostNow()
+	Audch.GetHostLast()
+	Audch.GetHostDiff()
 
-	//启动定时器
 	if Audch.EnableDnsmasq {
-		c.Start()
+		go Audch.EventListen()
 		dnsmasqServer()
 	} else {
-		c.Run()
+		Audch.EventListen()
 	}
 }

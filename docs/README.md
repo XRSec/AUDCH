@@ -1,8 +1,8 @@
 ## AUDCH
 
-Auto Update Docker Container TO User Hosts
+Auto Update Docker Container To User Hosts ConfigFile
 
-<font color="green">From Docker List ( cron: 5 min ) </font>
+Listen to Docker Events ( create || destroy )
 
 ## Notice
 
