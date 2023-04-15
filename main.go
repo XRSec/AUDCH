@@ -2,65 +2,54 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/client"
-	"github.com/robfig/cron/v3"
-	log "github.com/sirupsen/logrus"
-	"io/ioutil"
+	"github.com/miekg/dns"
 	"net"
 	"os"
 	"reflect"
 	"strings"
+
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/client"
+	"github.com/jpillora/opts"
+	log "github.com/sirupsen/logrus"
 )
 
 type (
-	AudchMap map[string]string
+	AudchMap  map[string]string
+	AudchOpts struct {
+		HostsFile string `opts:"help=hosts file to use for country lookups, short=c, default=/etc/hosts"`
+	}
 	AudchApp struct {
-		defaultHost                                                     string
-		Recreate                                                        bool
-		HostBytes                                                       []byte // hosts Byte 内容
+		lastStatus                                                      map[string]string // 创建容器有两个事件，再创建容器的时候容器并不存在与容器列表，所以还需监听start事件
+		HostBytes                                                       []byte
 		HostAll                                                         []string
 		HostNow, HostLast                                               AudchMap
 		Cli                                                             *client.Client
 		HostNowData                                                     types.Container
 		HostStr, Name, DnsmasqID, BridgeNetworkID, BridgeNetworkGateway string
+		AudchOpts
 	}
 )
 
 var (
-	err              error
-	Audch            AudchApp
-	version          = flag.Bool("v", false, "show version")
-	defaultHostsFile = flag.String("f", "/etc/hosts", "hosts filepath")
-	Debug            = flag.Bool("d", false, "debug")
-	buildTime        = "2022-10-14/09:52:49"
-	author           = "XRSec"
-	commitId         = "2de23d5054449f77ae88c8c3371586b3e0a941c4"
-	versionData      = "preview"
+	versionData string
+	err         error
+	Audch       AudchApp
 )
 
+// 初始化日志方法
 func init() {
-	flag.Parse()
-	// Version
-	if *version {
-		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "Version:", versionData)
-		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "BuildTime:", buildTime)
-		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "Author:", author)
-		fmt.Printf("\033[1;34m %-12v\033[1;36m %v\n", "CommitId:", commitId)
-		os.Exit(0)
+	opts.New(&Audch.AudchOpts).Name("Audch").PkgRepo().Version(versionData).Complete().Parse()
+	if Audch.HostsFile == "" {
+		Audch.HostsFile = "/hosts"
 	}
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:   true,
 		TimestampFormat: "2006-01-02 15:04:05",
 	})
-
-	if *Debug {
-		DebugModel()
-	}
 }
 
+// ClientDocker 连接客户端
 func (AudchApp) ClientDocker() {
 	Audch.Cli, err = client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
@@ -70,28 +59,75 @@ func (AudchApp) ClientDocker() {
 	log.Infoln("Successfully connected to Docker")
 }
 
+// EventListen 监听事件
+func (AudchApp) EventListen() {
+	log.Infoln("EventListen")
+	msgs, errs := Audch.Cli.Events(context.Background(), types.EventsOptions{})
+
+	for {
+		select {
+		case err := <-errs:
+			log.Infoln("err", err)
+		case msg := <-msgs:
+			// 非容器事件跳过
+			if msg.Type != "container" {
+				break
+			}
+			// 非创建/销毁事件跳过
+			tmpName := msg.Actor.Attributes["name"]
+			if msg.Action == "create" {
+				Audch.lastStatus[tmpName] = msg.Action
+				break
+			}
+			if (msg.Action == "start" && Audch.lastStatus[tmpName] == "create") || msg.Action == "destroy" {
+			} else {
+				break
+			}
+
+			log.Infoln(msg.Action, msg.Actor.Attributes["name"])
+			Audch.GetHostNow()
+			Audch.GetHostLast()
+			Audch.GetHostDiff()
+			delete(Audch.lastStatus, msg.Actor.Attributes["name"])
+			break
+
+		}
+	}
+}
+
+// GetBridge 获取桥接网络的网关
 func (AudchApp) GetBridge() {
 	networkList, err := Audch.Cli.NetworkList(context.Background(), types.NetworkListOptions{})
 	if err != nil {
 		log.Errorf("Unable to get bridge network, error: %v", err)
 		return
 	}
+
+	Audch.lastStatus = make(map[string]string)
+
 	for _, v := range networkList {
 		if v.Name == "bridge" {
 			Audch.BridgeNetworkID = v.ID
-			Audch.BridgeNetworkGateway = v.IPAM.Config[0].Gateway
+			for _, v1 := range v.IPAM.Config {
+				if v1.Gateway != "" {
+					Audch.BridgeNetworkGateway = v1.Gateway
+					break
+				}
+			}
 		}
 	}
 	if Audch.BridgeNetworkID == "" || Audch.BridgeNetworkGateway == "" {
 		log.Errorln("bridgeID/bridgeIP is empty")
-		return
+		os.Exit(1)
 	}
 }
 
+// ReturnName 获取容器名称
 func (AudchApp) ReturnName() string {
 	return strings.Replace(Audch.HostNowData.Names[len(Audch.HostNowData.Names)-1], "/", "", -1) + ".docker.shared" // TODO name: ["/adminer/db", "mysql"] *docker run --link
 }
 
+// GetIPAddress 获取容器IP
 func (AudchApp) GetIPAddress() {
 	if Audch.HostNowData.HostConfig.NetworkMode == "host" {
 		Audch.HostNow[Audch.ReturnName()] = Audch.BridgeNetworkGateway // 172.17.0.1 like 127.0.0.1
@@ -110,6 +146,7 @@ check:
 	}
 }
 
+// ConnectBridgeNetWork 连接桥接网络
 func (AudchApp) ConnectBridgeNetWork() {
 	err := Audch.Cli.NetworkConnect(context.Background(), Audch.BridgeNetworkID, Audch.HostNowData.ID, nil)
 	if err != nil {
@@ -124,11 +161,14 @@ func (AudchApp) ConnectBridgeNetWork() {
 	Audch.HostNowData.NetworkSettings.Networks = inspect.NetworkSettings.Networks
 }
 
+// GetHostNow 获取当前容器
 func (AudchApp) GetHostNow() {
-	// hostNow
+	// 容器列表
 	list, err := Audch.Cli.ContainerList(context.Background(), types.ContainerListOptions{})
 	if err != nil {
 		log.Errorf("Unable to list containers: %v", err)
+		Audch.ClientDocker() // 重新连接
+		Audch.GetHostNow()
 		return
 	}
 	Audch.HostNow = make(AudchMap)
@@ -138,9 +178,9 @@ func (AudchApp) GetHostNow() {
 }
 
 func (AudchApp) GetHostBytes() {
-	Audch.HostBytes, err = ioutil.ReadFile(*defaultHostsFile)
+	Audch.HostBytes, err = os.ReadFile(Audch.HostsFile)
 	if err != nil {
-		log.Errorf("Failed to read %v: %v", *defaultHostsFile, err)
+		log.Errorf("Failed to read %v: %v", Audch.HostsFile, err)
 		return
 	}
 }
@@ -194,11 +234,18 @@ func (AudchApp) GetHostDiff() {
 		}
 	}
 
+	for k, v := range Audch.HostNow {
+		if _, ok := Audch.HostLast[k]; !ok {
+			log.Infof("Add: %v %v", k, v)
+			update++
+		}
+	}
+
 	if len(Audch.HostLast) != 0 && del == 0 && update == 0 && len(Audch.HostNow) == len(Audch.HostLast) {
 		log.Infoln("Nothing to update")
 		return
 	}
-	log.Infof("Last %v、Del: %v、Update: %v records", len(Audch.HostLast), del, len(Audch.HostNow)-update)
+	log.Infof("Last %v、Del: %v、Update: %v records", len(Audch.HostLast), del, update)
 
 	for k, v := range Audch.HostNow {
 		Audch.HostAll = append(Audch.HostAll, v+"\t"+k+"\t# Audch")
@@ -215,74 +262,82 @@ func (AudchApp) GetHostStr() {
 }
 
 func (AudchApp) HostWrite() {
-	err = ioutil.WriteFile(*defaultHostsFile, []byte(Audch.HostStr), 0644)
+	err = os.WriteFile(Audch.HostsFile, []byte(Audch.HostStr), 0644)
 	if err != nil {
-		log.Errorf("Failed to write %v, %v", *defaultHostsFile, err)
+		log.Errorf("Failed to write %v, %v", Audch.HostsFile, err)
 		return
 	}
-	log.Infof("Write %v success", *defaultHostsFile)
+	log.Debugf("Write %v success", Audch.HostsFile)
 }
 
-func DebugModel() {
-	log.Infof("DebugModel Start.")
-	defer func() {
-		os.Exit(1)
-	}()
+func (AudchApp) dnsServer() {
+	dns.HandleFunc("docker.shared.", func(w dns.ResponseWriter, m *dns.Msg) {
+		r := new(dns.Msg)
+		r.SetReply(m)
+		r.Compress = true
+		r.Authoritative = true
+		r.RecursionAvailable = true
+		IPAddress := "NULL"
+		Domain := strings.TrimRight(r.Question[0].Name, ".")
+		dnsType := r.Question[0].Qtype
 
-	udpServer, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: 53})
-	if err != nil {
-		log.Errorf("Failed to setup the udp server: %s\n", err.Error())
-		return
-	}
-	defer func() {
-		if err := udpServer.Close(); err != nil {
-			log.Errorf("Failed to close the udp server: %s\n", err.Error())
+		defer func(w dns.ResponseWriter, msg *dns.Msg) {
+			log.Infof("Query: [%v ? %s --> %v]\n", w.RemoteAddr(), Domain, IPAddress)
+			err := w.WriteMsg(msg)
+			if err != nil {
+				log.Errorf("Error writing response: %v", err)
+				return
+			}
+		}(w, r)
+
+		// not resolve
+		if !(dnsType == dns.TypeA || dnsType == dns.TypeAAAA) {
+			r.Rcode = dns.RcodeNotImplemented
 			return
 		}
-	}()
 
-	for {
-		buf := make([]byte, 1024)
-		n, remoteAddr, err := udpServer.ReadFromUDP(buf)
+		if addr := Audch.HostNow[Domain]; addr != "" {
+			IPAddress = addr
+			r.Answer = append(r.Answer, &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   m.Question[0].Name,
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    uint32(86400),
+				},
+				A: net.ParseIP(IPAddress).To4(),
+			})
+		}
+
+		if len(r.Answer) == 0 {
+			r.Rcode = dns.RcodeNameError
+		}
+	})
+
+	// start server
+	udpServer := &dns.Server{Addr: ":53", Net: "udp"}
+	log.Printf("Starting at %v\n", udpServer.Addr)
+	if err := udpServer.ListenAndServe(); err != nil {
+		log.Fatalf("Failed to setup the udp server: %s\n", err.Error())
+	}
+
+	defer func(udpServer *dns.Server) {
+		err := udpServer.Shutdown()
 		if err != nil {
-			log.Errorf("Failed to read from udp server: %s\n", err.Error())
+			log.Errorf("Failed to shutdown the udp server: %s\n", err.Error())
 			return
 		}
-		if n <= 0 {
-			continue
-		}
-		log.Infof("get: \n  {\n\tn: %v,\n\tremoteAddr: %v,\n\tbytes: %v\n  }\n", n, remoteAddr, string(buf))
-		if _, err := udpServer.WriteToUDP([]byte("Hello Word"), remoteAddr); err != nil {
-			log.Errorf("Failed to write to udp server: %s\n", err.Error())
-			return
-		}
-	}
+	}(udpServer)
 }
 
-func audchServer() {
+func main() {
 	Audch.ClientDocker()
 	Audch.GetBridge()
 	Audch.GetHostNow()
 	Audch.GetHostLast()
 	Audch.GetHostDiff()
-}
 
-func dnsServer() {
-	// 本着极限的原则，我准备自己写一个 精简版的dns_server，但是目前已有的库都存在一个问题，无法解析，也许是我姿势不对，如果你有办法，请 提交 issues
-	// 关于一些 库 可以参考 docs/Deprecated.md 中的 DNS 下面的 dnsServer
-}
-
-func main() {
-	audchServer() // Run once when starting up
-	c := cron.New()
-	if _, err = c.AddFunc("*/5 * * * *", func() {
-		audchServer()
-	}); err != nil {
-		log.Errorf("Cron Add Error: [%v]", err)
-	}
-	//启动定时器
-	c.Start()
-	log.Infof("Cron Start")
-
-	dnsServer()
+	// Start DNS Server
+	go Audch.EventListen()
+	Audch.dnsServer()
 }

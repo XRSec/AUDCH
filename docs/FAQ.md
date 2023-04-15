@@ -1,3 +1,5 @@
+<font color="red" size=5>This document is for informational purposes only</font>
+
 ```diff
 -- This document is out of date and some content is for informational purposes only
 ```

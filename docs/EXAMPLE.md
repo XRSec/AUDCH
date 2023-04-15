@@ -1,3 +1,5 @@
+<font color="red" size=5>This document is for informational purposes only</font>
+
 ![nginx](images/nginx.png)
 
 ![sopp](images/sopp.png)
