@@ -3,7 +3,7 @@ module github.com/XRSec/AUDCH
 go 1.20
 
 require (
-	github.com/docker/docker v24.0.7+incompatible
+	github.com/docker/docker v24.0.9+incompatible
 	github.com/sirupsen/logrus v1.9.0
 )
 
