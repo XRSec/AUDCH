@@ -19,11 +19,9 @@ jobs:
     name: AUDCH Docker Build
     runs-on: ubuntu-latest
     steps:
-      -
-        name: Private Actions Checkout
-        uses: actions/checkout@v3
-      -
-        name: Get tag id
+      - name: Private Actions Checkout
+        uses: actions/checkout@v5
+      - name: Get tag id
         id: tag
         run: |
           if [[ "${{ github.event.inputs.tag }}"  != '' ]]; then
@@ -35,17 +33,14 @@ jobs:
             fi
             echo "dir=${tag}" >> $GITHUB_OUTPUT
           fi
-      -
-        name: Get Data
+      - name: Get Data
         id: time
         run: echo "dir=$(date +'%Y-%m-%d/%H:%M:%S')" >> $GITHUB_OUTPUT
-      -
-        name: Get commitId
+      - name: Get commitId
         id: commitId
         run: echo "dir=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
-      -
-        name: Build with xgo
-        uses: crazy-max/ghaction-xgo@v2
+      - name: Build with xgo
+        uses: crazy-max/ghaction-xgo@v3.2.0
         with:
           xgo_version: latest
           go_version: ${{ matrix.go_version }}
@@ -57,44 +52,37 @@ jobs:
           race: false
           ldflags: -s -w -X main.versionData=${{ steps.tag.outputs.dir }} -X main.buildTime=${{ steps.time.outputs.dir }} -X main.commitId=${{ steps.commitId.outputs.dir }} -X main.author=XRSec
           buildmode: default
-      -
-        name: Delete old Releases
-        uses: dev-drprasad/delete-older-releases@v0.2.1
+      - name: Delete old Releases
+        uses: dev-drprasad/delete-older-releases@v0.3.4
         with:
           repo: ${{ github.repository }}
           keep_latest: 3
           delete_tag_pattern: ""
         env:
           GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
-      -
-        name: Docker Setup QEMU
-        uses: docker/setup-qemu-action@v2
-      -
-        name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v2
-      -
-        name: Docker Login in Aliyun
-        uses: docker/login-action@v2
+      - name: Docker Setup QEMU
+        uses: docker/setup-qemu-action@v3.6.0
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+      - name: Docker Login in Aliyun
+        uses: docker/login-action@v3.5.0
         with:
           registry: ${{ secrets.DOCKERHUB_REGISTRY_ALIYUN }}
           username: ${{ secrets.DOCKERHUB_ACCOUNT_ALIYUN }}
           password: ${{ secrets.DOCKERHUB_PASSWORD_ALIYUN }}
-      -
-        name: Docker Login
-        uses: docker/login-action@v2
+      - name: Docker Login
+        uses: docker/login-action@v3.5.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      -
-        name: Log in to the Container registry
-        uses: docker/login-action@v2
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.TOKEN_GITHUB }}
-      -
-        name: Build and push Docker images
-        uses: docker/build-push-action@v3
+      - name: Build and push Docker images
+        uses: docker/build-push-action@v6.18.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -105,9 +93,8 @@ jobs:
             ${{ secrets.DOCKERHUB_REGISTRY_ALIYUN }}/${{ secrets.DOCKERHUB_USERNAME }}/audch:latest
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audch:latest.cache
           cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/audch:latest.cache,mode=max
-      -
-        name: Make release
-        uses: softprops/action-gh-release@v1
+      - name: Make release
+        uses: softprops/action-gh-release@v2.3.2
         with:
           files: "bin/**"
           body_path: docs/UPDATE.md
@@ -116,50 +103,13 @@ jobs:
           tag_name: ${{ steps.tag.outputs.dir }}
         env:
           GITHUB_TOKEN: ${{ secrets.TOKEN_GITHUB }}
-      -
-        name: Get Data
-        id: getDingData
-        run: |
-          set -ex
-          # 输出仓库名
-          REPOSITORY="${{GITHUB.REPOSITORY}}"
-          echo "REPOSITORY=${REPOSITORY#*/}" >> $GITHUB_OUTPUT
-
-          # 获取用户仓库信息
-          # RESPONSE="$(curl -sLm 10 https://api.github.com/repos/${{ GITHUB.REPOSITORY }})"
-          # 建议填写自己的 TOKEN
-          RESPONSE="$(curl -sLm 10 https://api.github.com/repos/${{ GITHUB.REPOSITORY }} -H "Authorization: token ${{ SECRETS.TOKEN_GITHUB }}")"
-
-          # 获取 用户仓库 设置的 描述，如果为空，可能是没有使用 TOKEN
-          DESCRIPTION="$(jq -r .description <(echo ${RESPONSE}))"
-          echo "DESCRIPTION=${DESCRIPTION}" >> $GITHUB_OUTPUT
-
-          # 获取 用户仓库 设置的 URL, 如果没有就输出 Github 地址
-          URL="$(jq -r .homepage <(echo ${RESPONSE}))"
-          if [[ "${URL}" == "null" || "${URL}" == "" ]]; then
-            echo "URL=${{ GITHUB.SERVER_URL }}/${{ GITHUB.REPOSITORY }}" >> $GITHUB_OUTPUT
-          else
-            echo "URL=${URL}" >> $GITHUB_OUTPUT
-          fi
-      -
-        name: Send dingding notify
-        uses: zcong1993/actions-ding@master
+      - name: Send notification to Feishu
+        uses: XRSec/feishu-bot-webhook-action@v1
         with:
-          dingToken: ${{ SECRETS.DING_TOKEN }}
-          secret: ${{ SECRETS.DING_SECRET }}
-          body: |
-            {
-              "msgtype": "link",
-              "link": {
-                  "text": "${{ steps.getDingData.outputs.DESCRIPTION }}",
-                  "title":  "${{ steps.getDingData.outputs.REPOSITORY }} WorkFlow ${{ GITHUB.JOB }} Success!",
-                  "picUrl": "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
-                  "messageUrl": "${{ steps.getDingData.outputs.URL }}"
-              }
-            }
-      -
-        name: Docker Hub Description
-        uses: peter-evans/dockerhub-description@v3
+          FEISHU_BOT_WEBHOOK: ${{ secrets.FEISHU_BOT_WEBHOOK }}
+          FEISHU_BOT_SIGNKEY: ${{ secrets.FEISHU_BOT_SIGNKEY }}
+      - name: Docker Hub Description
+        uses: peter-evans/dockerhub-description@v4.0.2
         with:
           username: ${{ SECRETS.DOCKERHUB_USERNAME }}
           password: ${{ SECRETS.DOCKERHUB_PASSWORD }}
