@@ -1,6 +1,6 @@
 module github.com/XRSec/AUDCH
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/docker/docker v25.0.6+incompatible
@@ -24,8 +24,8 @@ require (
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	golang.org/x/mod v0.10.0 // indirect
-	golang.org/x/net v0.41.0 // indirect
-	golang.org/x/sys v0.33.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/tools v0.8.0 // indirect
 )
 
